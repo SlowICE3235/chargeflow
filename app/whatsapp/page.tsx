@@ -8,14 +8,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { createClient } from "@/lib/supabase/client";
-import { MessageCircle, QrCode, RefreshCw, Unlink } from "lucide-react";
+import { MessageCircle, QrCode, Unlink, ExternalLink, CheckCircle } from "lucide-react";
 
 type ConnectionStatus = "DISCONNECTED" | "CONNECTING" | "CONNECTED";
 
 export default function WhatsAppPage() {
   const [status, setStatus] = useState<ConnectionStatus>("DISCONNECTED");
-  const [qrCode, setQrCode] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [zapiUrl, setZapiUrl] = useState<string | null>(null);
   const supabase = createClient();
 
   useEffect(() => {
@@ -28,22 +28,78 @@ export default function WhatsAppPage() {
 
     const { data: profile } = await supabase
       .from("profiles")
-      .select("whatsapp_session_status")
+      .select("whatsapp_session_status, whatsapp_instance_id")
       .eq("id", user.id)
       .single();
 
     if (profile) {
       setStatus(profile.whatsapp_session_status as ConnectionStatus);
+      if (profile.whatsapp_instance_id) {
+        setZapiUrl(`https://app.z-api.io/app/instances/${profile.whatsapp_instance_id}`);
+      }
     }
   }
 
   const handleConnect = async () => {
     setLoading(true);
     setStatus("CONNECTING");
-    setTimeout(() => {
-      setQrCode("https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=whatsapp-auth-simulated");
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
       setLoading(false);
-    }, 1500);
+      return;
+    }
+
+    // Abre o painel da Z-API em nova aba para o usuário escanear o QR code
+    window.open("https://app.z-api.io", "_blank");
+
+    await supabase
+      .from("profiles")
+      .update({ whatsapp_session_status: "CONNECTING" })
+      .eq("id", user.id);
+
+    setLoading(false);
+  };
+
+  const handleCheckConnection = async () => {
+    setLoading(true);
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      setLoading(false);
+      return;
+    }
+
+    // Verifica via API da Z-API se está conectado
+    try {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("whatsapp_instance_id")
+        .eq("id", user.id)
+        .single();
+
+      if (!profile?.whatsapp_instance_id) {
+        setLoading(false);
+        return;
+      }
+
+      const response = await fetch(`/api/whatsapp/status?instanceId=${profile.whatsapp_instance_id}`);
+      const result = await response.json();
+
+      if (result.connected) {
+        await supabase
+          .from("profiles")
+          .update({ whatsapp_session_status: "CONNECTED" })
+          .eq("id", user.id);
+        setStatus("CONNECTED");
+      } else {
+        alert("WhatsApp ainda não conectado. Escaneie o QR Code no painel da Z-API primeiro.");
+      }
+    } catch (error) {
+      console.error("Erro ao verificar conexão:", error);
+    }
+
+    setLoading(false);
   };
 
   const handleDisconnect = async () => {
@@ -56,20 +112,6 @@ export default function WhatsAppPage() {
       .eq("id", user.id);
 
     setStatus("DISCONNECTED");
-    setQrCode(null);
-  };
-
-  const handleSimulateConnected = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-
-    await supabase
-      .from("profiles")
-      .update({ whatsapp_session_status: "CONNECTED" })
-      .eq("id", user.id);
-
-    setStatus("CONNECTED");
-    setQrCode(null);
   };
 
   const statusConfig = {
@@ -104,28 +146,42 @@ export default function WhatsAppPage() {
                 {status === "DISCONNECTED" && (
                   <Button className="w-full" onClick={handleConnect} disabled={loading}>
                     <QrCode className="w-4 h-4 mr-2" />
-                    {loading ? "Gerando QR Code..." : "Conectar WhatsApp"}
+                    {loading ? "Abrindo Z-API..." : "Conectar WhatsApp"}
                   </Button>
                 )}
 
-                {status === "CONNECTING" && qrCode && (
+                {status === "CONNECTING" && (
                   <>
-                    <div className="flex flex-col items-center space-y-4">
-                      <img src={qrCode} alt="QR Code WhatsApp" className="rounded-lg border" />
-                      <p className="text-sm text-muted-foreground text-center">Escaneie o QR Code com seu WhatsApp</p>
+                    <div className="rounded-lg bg-yellow-500/10 border border-yellow-500/20 p-4 text-center space-y-2">
+                      <p className="text-sm font-medium text-yellow-600">Aguardando conexão</p>
+                      <p className="text-xs text-muted-foreground">
+                        Escaneie o QR Code no painel da Z-API e depois clique em "Verificar Conexão"
+                      </p>
                     </div>
-                    <Button variant="outline" className="w-full" onClick={handleSimulateConnected}>
-                      <RefreshCw className="w-4 h-4 mr-2" />
-                      Simular Conexão (Dev)
+                    <Button className="w-full" onClick={handleCheckConnection} disabled={loading}>
+                      <CheckCircle className="w-4 h-4 mr-2" />
+                      {loading ? "Verificando..." : "Verificar Conexão"}
+                    </Button>
+                    <Button variant="outline" className="w-full" onClick={() => window.open("https://app.z-api.io", "_blank")}>
+                      <ExternalLink className="w-4 h-4 mr-2" />
+                      Abrir Painel Z-API
                     </Button>
                   </>
                 )}
 
                 {status === "CONNECTED" && (
-                  <Button variant="destructive" className="w-full" onClick={handleDisconnect}>
-                    <Unlink className="w-4 h-4 mr-2" />
-                    Desconectar
-                  </Button>
+                  <>
+                    <div className="rounded-lg bg-green-500/10 border border-green-500/20 p-4 text-center">
+                      <p className="text-sm font-medium text-green-600">WhatsApp conectado!</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        O sistema está pronto para enviar cobranças automaticamente.
+                      </p>
+                    </div>
+                    <Button variant="destructive" className="w-full" onClick={handleDisconnect}>
+                      <Unlink className="w-4 h-4 mr-2" />
+                      Desconectar
+                    </Button>
+                  </>
                 )}
               </div>
             </CardContent>
@@ -137,16 +193,16 @@ export default function WhatsAppPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <h4 className="font-medium">1. Clique em Conectar</h4>
-                <p className="text-sm text-muted-foreground">O sistema gerará um QR Code para autenticação.</p>
+                <h4 className="font-medium">1. Clique em "Conectar WhatsApp"</h4>
+                <p className="text-sm text-muted-foreground">Isso vai abrir o painel da Z-API em uma nova aba.</p>
               </div>
               <div className="space-y-2">
-                <h4 className="font-medium">2. Escaneie com seu WhatsApp</h4>
-                <p className="text-sm text-muted-foreground">Abra o WhatsApp no celular, vá em Configurações &gt; Dispositivos Conectados &gt; Conectar Dispositivo.</p>
+                <h4 className="font-medium">2. Escaneie o QR Code no painel da Z-API</h4>
+                <p className="text-sm text-muted-foreground">Abra o WhatsApp no celular, vá em Configurações → Dispositivos Conectados → Conectar Dispositivo.</p>
               </div>
               <div className="space-y-2">
-                <h4 className="font-medium">3. Pronto! Cobranças automáticas</h4>
-                <p className="text-sm text-muted-foreground">O sistema enviará lembretes de cobrança automaticamente nos horários programados.</p>
+                <h4 className="font-medium">3. Volte aqui e clique "Verificar Conexão"</h4>
+                <p className="text-sm text-muted-foreground">O sistema vai confirmar que seu WhatsApp está conectado.</p>
               </div>
 
               <div className="rounded-lg bg-muted p-4">

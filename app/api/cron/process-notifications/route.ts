@@ -51,41 +51,21 @@ async function sendWhatsAppMessage(
   instanceId: string
 ): Promise<boolean> {
   try {
-    // Implementação com Evolution API
-    if (process.env.EVOLUTION_API_URL && process.env.EVOLUTION_API_KEY) {
-      const response = await fetch(
-        `${process.env.EVOLUTION_API_URL}/message/sendText/${instanceId}`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            apikey: process.env.EVOLUTION_API_KEY,
-          },
-          body: JSON.stringify({
-            number: phone,
-            text: message,
-          }),
-        }
-      );
-      return response.ok;
+    const token = process.env.ZAPI_TOKEN;
+    if (!token || !instanceId) {
+      console.log("[Z-API] Token ou Instance ID não configurado");
+      return false;
     }
 
-    // Implementação com Z-API
-    if (process.env.ZAPI_INSTANCE_ID && process.env.ZAPI_TOKEN) {
-      const response = await fetch(
-        `https://api.z-api.io/instances/${process.env.ZAPI_INSTANCE_ID}/token/${process.env.ZAPI_TOKEN}/send-text`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ phone, message }),
-        }
-      );
-      return response.ok;
-    }
-
-    // Fallback: simula envio em dev
-    console.log(`[SIMULAÇÃO] Enviando para ${phone}: ${message}`);
-    return true;
+    const response = await fetch(
+      `https://api.z-api.io/instances/${instanceId}/token/${token}/send-text`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone, message }),
+      }
+    );
+    return response.ok;
   } catch (error) {
     console.error("Erro ao enviar mensagem:", error);
     return false;
