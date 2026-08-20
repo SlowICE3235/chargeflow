@@ -41,27 +41,28 @@ export default function DashboardPage() {
         .eq("id", user.id)
         .single();
 
-      const { data: charges } = await supabase
+      const { data: chargesRaw } = await supabase
         .from("charges")
         .select("*, customers(name)")
         .eq("user_id", user.id)
         .order("created_at", { ascending: false })
-        .limit(10)
-        .returns<Charge[]>();
+        .limit(10);
 
-      if (charges) {
+      const charges = (chargesRaw || []) as Charge[];
+
+      if (charges.length > 0) {
         setRecentCharges(charges);
 
-        const pending = charges.filter((c: Charge) => c.status === "PENDING");
-        const paid = charges.filter((c: Charge) => c.status === "PAID");
-        const overdue = charges.filter((c: Charge) => c.status === "OVERDUE");
+        const pending = charges.filter((c) => c.status === "PENDING");
+        const paid = charges.filter((c) => c.status === "PAID");
+        const overdue = charges.filter((c) => c.status === "OVERDUE");
 
         setMetrics({
-          totalToReceive: pending.reduce((sum, c) => sum + c.amount, 0),
+          totalToReceive: pending.reduce((sum: number, c: Charge) => sum + c.amount, 0),
           totalToReceiveCount: pending.length,
-          totalRecovered: paid.reduce((sum, c) => sum + c.amount, 0),
+          totalRecovered: paid.reduce((sum: number, c: Charge) => sum + c.amount, 0),
           totalRecoveredCount: paid.length,
-          overdueAmount: overdue.reduce((sum, c) => sum + c.amount, 0),
+          overdueAmount: overdue.reduce((sum: number, c: Charge) => sum + c.amount, 0),
           overdueCount: overdue.length,
           whatsappStatus: profile?.whatsapp_session_status || "DISCONNECTED",
         });
