@@ -46,14 +46,15 @@ export default function DashboardPage() {
         .select("*, customers(name)")
         .eq("user_id", user.id)
         .order("created_at", { ascending: false })
-        .limit(10);
+        .limit(10)
+        .returns<Charge[]>();
 
       if (charges) {
         setRecentCharges(charges);
 
-        const pending = charges.filter((c) => c.status === "PENDING");
-        const paid = charges.filter((c) => c.status === "PAID");
-        const overdue = charges.filter((c) => c.status === "OVERDUE");
+        const pending = charges.filter((c: Charge) => c.status === "PENDING");
+        const paid = charges.filter((c: Charge) => c.status === "PAID");
+        const overdue = charges.filter((c: Charge) => c.status === "OVERDUE");
 
         setMetrics({
           totalToReceive: pending.reduce((sum, c) => sum + c.amount, 0),
