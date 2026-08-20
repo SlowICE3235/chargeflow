@@ -6,13 +6,8 @@ export async function middleware(request: NextRequest) {
     request: { headers: request.headers },
   });
 
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  if (!url || !key) {
-    // Durante build, permite passar sem autenticacao
-    return response;
-  }
+  const url = "https://ldjvjhlwmbsbvntppzil.supabase.co";
+  const key = "sb_publishable_g4SwjWqjOEIQ0nFu9FBBgA_XuwXjzWJ";
 
   const supabase = createServerClient(url, key, {
     cookies: {
