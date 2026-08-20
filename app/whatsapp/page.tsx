@@ -5,6 +5,8 @@ export const dynamic = "force-dynamic";
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/layout/shell";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { createClient } from "@/lib/supabase/client";
@@ -17,6 +19,8 @@ export default function WhatsAppPage() {
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [instanceId, setInstanceId] = useState("");
+  const [instanceToken, setInstanceToken] = useState("");
   const supabase = createClient();
 
   useEffect(() => {
@@ -29,22 +33,23 @@ export default function WhatsAppPage() {
 
     const { data: profile } = await supabase
       .from("profiles")
-      .select("whatsapp_session_status, whatsapp_instance_id")
+      .select("whatsapp_session_status, whatsapp_instance_id, whatsapp_instance_token")
       .eq("id", user.id)
       .single();
 
     if (profile) {
       setStatus(profile.whatsapp_session_status as ConnectionStatus);
-      // Se estiver conectando, tenta buscar QR code
-      if (profile.whatsapp_session_status === "CONNECTING" && profile.whatsapp_instance_id) {
-        fetchQRCode(profile.whatsapp_instance_id);
+      setInstanceId(profile.whatsapp_instance_id || "");
+      setInstanceToken(profile.whatsapp_instance_token || "");
+      if (profile.whatsapp_session_status === "CONNECTING" && profile.whatsapp_instance_id && profile.whatsapp_instance_token) {
+        fetchQRCode(profile.whatsapp_instance_id, profile.whatsapp_instance_token);
       }
     }
   }
 
-  async function fetchQRCode(instanceId: string) {
+  async function fetchQRCode(id: string, token: string) {
     try {
-      const response = await fetch(`/api/whatsapp/qrcode?instanceId=${instanceId}`);
+      const response = await fetch(`/api/whatsapp/qrcode?instanceId=${id}&token=${token}`);
       const data = await response.json();
       if (data.qrcode) {
         setQrCode(data.qrcode);
@@ -55,6 +60,11 @@ export default function WhatsAppPage() {
   }
 
   const handleConnect = async () => {
+    if (!instanceId || !instanceToken) {
+      alert("Preencha o ID da instância e o Token da Z-API");
+      return;
+    }
+
     setLoading(true);
 
     const { data: { user } } = await supabase.auth.getUser();
@@ -63,40 +73,18 @@ export default function WhatsAppPage() {
       return;
     }
 
-    try {
-      // Cria uma nova instância na Z-API
-      const response = await fetch("/api/whatsapp/create-instance", {
-        method: "POST",
-      });
-      const data = await response.json();
+    // Salva no perfil
+    await supabase
+      .from("profiles")
+      .update({
+        whatsapp_session_status: "CONNECTING",
+        whatsapp_instance_id: instanceId,
+        whatsapp_instance_token: instanceToken,
+      })
+      .eq("id", user.id);
 
-      if (data.instanceId) {
-        // Salva no perfil
-        await supabase
-          .from("profiles")
-          .update({
-            whatsapp_session_status: "CONNECTING",
-            whatsapp_instance_id: data.instanceId,
-          })
-          .eq("id", user.id);
-
-        setStatus("CONNECTING");
-
-        // Busca o QR code
-        if (data.qrcode) {
-          setQrCode(data.qrcode);
-        } else {
-          // Tenta buscar após 3 segundos
-          setTimeout(() => fetchQRCode(data.instanceId), 3000);
-        }
-      } else {
-        alert("Erro ao criar instância do WhatsApp. Tente novamente.");
-      }
-    } catch (error) {
-      console.error("Erro ao conectar:", error);
-      alert("Erro ao conectar WhatsApp.");
-    }
-
+    setStatus("CONNECTING");
+    fetchQRCode(instanceId, instanceToken);
     setLoading(false);
   };
 
@@ -112,16 +100,18 @@ export default function WhatsAppPage() {
     try {
       const { data: profile } = await supabase
         .from("profiles")
-        .select("whatsapp_instance_id")
+        .select("whatsapp_instance_id, whatsapp_instance_token")
         .eq("id", user.id)
         .single();
 
-      if (!profile?.whatsapp_instance_id) {
+      if (!profile?.whatsapp_instance_id || !profile?.whatsapp_instance_token) {
         setChecking(false);
         return;
       }
 
-      const response = await fetch(`/api/whatsapp/status?instanceId=${profile.whatsapp_instance_id}`);
+      const response = await fetch(
+        `/api/whatsapp/status?instanceId=${profile.whatsapp_instance_id}&token=${profile.whatsapp_instance_token}`
+      );
       const result = await response.json();
 
       if (result.connected) {
@@ -132,8 +122,7 @@ export default function WhatsAppPage() {
         setStatus("CONNECTED");
         setQrCode(null);
       } else {
-        // Tenta buscar QR code novamente
-        fetchQRCode(profile.whatsapp_instance_id);
+        fetchQRCode(profile.whatsapp_instance_id, profile.whatsapp_instance_token);
         alert("WhatsApp ainda não conectado. Escaneie o QR Code abaixo com seu celular.");
       }
     } catch (error) {
@@ -152,11 +141,14 @@ export default function WhatsAppPage() {
       .update({
         whatsapp_session_status: "DISCONNECTED",
         whatsapp_instance_id: null,
+        whatsapp_instance_token: null,
       })
       .eq("id", user.id);
 
     setStatus("DISCONNECTED");
     setQrCode(null);
+    setInstanceId("");
+    setInstanceToken("");
   };
 
   const statusConfig = {
@@ -189,10 +181,32 @@ export default function WhatsAppPage() {
 
               <div className="space-y-3">
                 {status === "DISCONNECTED" && (
-                  <Button className="w-full" onClick={handleConnect} disabled={loading}>
-                    {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <QrCode className="w-4 h-4 mr-2" />}
-                    {loading ? "Criando instância..." : "Conectar WhatsApp"}
-                  </Button>
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="instanceId">ID da Instância Z-API</Label>
+                      <Input
+                        id="instanceId"
+                        placeholder="3F7EFE1AC0..."
+                        value={instanceId}
+                        onChange={(e) => setInstanceId(e.target.value)}
+                      />
+                      <p className="text-xs text-muted-foreground">Copie do painel da Z-API → Instâncias Web</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="instanceToken">Token da Instância</Label>
+                      <Input
+                        id="instanceToken"
+                        placeholder="5D7F8FB28E..."
+                        value={instanceToken}
+                        onChange={(e) => setInstanceToken(e.target.value)}
+                      />
+                      <p className="text-xs text-muted-foreground">Copie do painel da Z-API → Instâncias Web → Token</p>
+                    </div>
+                    <Button className="w-full" onClick={handleConnect} disabled={loading}>
+                      {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <QrCode className="w-4 h-4 mr-2" />}
+                      {loading ? "Buscando QR Code..." : "Conectar WhatsApp"}
+                    </Button>
+                  </div>
                 )}
 
                 {status === "CONNECTING" && (
@@ -208,7 +222,7 @@ export default function WhatsAppPage() {
                     {!qrCode && (
                       <div className="flex flex-col items-center space-y-4 py-8">
                         <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-                        <p className="text-sm text-muted-foreground">Gerando QR Code...</p>
+                        <p className="text-sm text-muted-foreground">Buscando QR Code...</p>
                       </div>
                     )}
                     <Button className="w-full" onClick={handleCheckConnection} disabled={checking}>
@@ -238,20 +252,24 @@ export default function WhatsAppPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Instruções</CardTitle>
+              <CardTitle>Como conectar</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <h4 className="font-medium">1. Clique em "Conectar WhatsApp"</h4>
-                <p className="text-sm text-muted-foreground">O sistema cria uma instância e gera um QR Code.</p>
+                <h4 className="font-medium">1. Vá no painel da Z-API</h4>
+                <p className="text-sm text-muted-foreground">Acesse <a href="https://app.z-api.io" target="_blank" className="text-primary underline">app.z-api.io</a> e copie o ID e Token da sua instância.</p>
               </div>
               <div className="space-y-2">
-                <h4 className="font-medium">2. Escaneie o QR Code</h4>
-                <p className="text-sm text-muted-foreground">Abra o WhatsApp no celular → Configurações → Dispositivos Conectados → Conectar.</p>
+                <h4 className="font-medium">2. Cole os dados aqui</h4>
+                <p className="text-sm text-muted-foreground">Cole o ID da Instância e o Token nos campos ao lado.</p>
               </div>
               <div className="space-y-2">
-                <h4 className="font-medium">3. Clique "Verificar Conexão"</h4>
-                <p className="text-sm text-muted-foreground">Confirme que o WhatsApp está conectado.</p>
+                <h4 className="font-medium">3. Clique em Conectar</h4>
+                <p className="text-sm text-muted-foreground">O QR Code vai aparecer na tela. Escaneie com o WhatsApp do celular.</p>
+              </div>
+              <div className="space-y-2">
+                <h4 className="font-medium">4. Verifique a conexão</h4>
+                <p className="text-sm text-muted-foreground">Depois de escanear, clique em "Já escaneei — Verificar Conexão".</p>
               </div>
 
               <div className="rounded-lg bg-muted p-4">

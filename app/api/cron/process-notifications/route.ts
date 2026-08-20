@@ -48,17 +48,17 @@ function sleep(ms: number) {
 async function sendWhatsAppMessage(
   phone: string,
   message: string,
-  instanceId: string
+  instanceId: string,
+  instanceToken: string
 ): Promise<boolean> {
   try {
-    const token = process.env.ZAPI_TOKEN;
-    if (!token || !instanceId) {
+    if (!instanceToken || !instanceId) {
       console.log("[Z-API] Token ou Instance ID não configurado");
       return false;
     }
 
     const response = await fetch(
-      `https://api.z-api.io/instances/${instanceId}/token/${token}/send-text`,
+      `https://api.z-api.io/instances/${instanceId}/token/${instanceToken}/send-text`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -102,7 +102,7 @@ export async function GET(request: Request) {
 
   // 1. Lembrete Preventivo (-2 Dias)
   const { data: before2DaysCharges } = await db("charges")
-    .select("*, customers(*), profiles(whatsapp_instance_id)")
+    .select("*, customers(*), profiles(whatsapp_instance_id, whatsapp_instance_token)")
     .eq("status", "PENDING")
     .eq("due_date", twoDaysLater.toISOString().split("T")[0]);
 
@@ -124,7 +124,8 @@ export async function GET(request: Request) {
         const success = await sendWhatsAppMessage(
           (charge.customers as Customer).phone,
           message,
-          charge.profiles?.whatsapp_instance_id || ""
+          charge.profiles?.whatsapp_instance_id || "",
+          charge.profiles?.whatsapp_instance_token || ""
         );
 
         await db("notification_logs").insert({
@@ -145,7 +146,7 @@ export async function GET(request: Request) {
 
   // 2. Lembrete do Dia (Vencimento)
   const { data: onDueDateCharges } = await db("charges")
-    .select("*, customers(*), profiles(whatsapp_instance_id)")
+    .select("*, customers(*), profiles(whatsapp_instance_id, whatsapp_instance_token)")
     .eq("status", "PENDING")
     .eq("due_date", today.toISOString().split("T")[0]);
 
@@ -167,7 +168,8 @@ export async function GET(request: Request) {
         const success = await sendWhatsAppMessage(
           (charge.customers as Customer).phone,
           message,
-          charge.profiles?.whatsapp_instance_id || ""
+          charge.profiles?.whatsapp_instance_id || "",
+          charge.profiles?.whatsapp_instance_token || ""
         );
 
         await db("notification_logs").insert({
@@ -193,7 +195,7 @@ export async function GET(request: Request) {
     .lt("due_date", today.toISOString().split("T")[0]);
 
   const { data: after3DaysCharges } = await db("charges")
-    .select("*, customers(*), profiles(whatsapp_instance_id)")
+    .select("*, customers(*), profiles(whatsapp_instance_id, whatsapp_instance_token)")
     .eq("status", "OVERDUE")
     .eq("due_date", threeDaysAgo.toISOString().split("T")[0]);
 
@@ -215,7 +217,8 @@ export async function GET(request: Request) {
         const success = await sendWhatsAppMessage(
           (charge.customers as Customer).phone,
           message,
-          charge.profiles?.whatsapp_instance_id || ""
+          charge.profiles?.whatsapp_instance_id || "",
+          charge.profiles?.whatsapp_instance_token || ""
         );
 
         await db("notification_logs").insert({

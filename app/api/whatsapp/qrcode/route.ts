@@ -3,15 +3,10 @@ import { NextResponse } from "next/server";
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const instanceId = searchParams.get("instanceId");
+  const token = searchParams.get("token");
 
-  if (!instanceId) {
-    return NextResponse.json({ error: "instanceId required" }, { status: 400 });
-  }
-
-  const token = process.env.ZAPI_TOKEN;
-
-  if (!token) {
-    return NextResponse.json({ error: "ZAPI_TOKEN not configured" }, { status: 500 });
+  if (!instanceId || !token) {
+    return NextResponse.json({ error: "instanceId and token required" }, { status: 400 });
   }
 
   try {
