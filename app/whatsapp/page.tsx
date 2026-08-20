@@ -8,14 +8,15 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { createClient } from "@/lib/supabase/client";
-import { MessageCircle, QrCode, Unlink, ExternalLink, CheckCircle } from "lucide-react";
+import { MessageCircle, QrCode, Unlink, CheckCircle, Loader2 } from "lucide-react";
 
 type ConnectionStatus = "DISCONNECTED" | "CONNECTING" | "CONNECTED";
 
 export default function WhatsAppPage() {
   const [status, setStatus] = useState<ConnectionStatus>("DISCONNECTED");
+  const [qrCode, setQrCode] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [zapiUrl, setZapiUrl] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
   const supabase = createClient();
 
   useEffect(() => {
@@ -34,15 +35,27 @@ export default function WhatsAppPage() {
 
     if (profile) {
       setStatus(profile.whatsapp_session_status as ConnectionStatus);
-      if (profile.whatsapp_instance_id) {
-        setZapiUrl(`https://app.z-api.io/app/instances/${profile.whatsapp_instance_id}`);
+      // Se estiver conectando, tenta buscar QR code
+      if (profile.whatsapp_session_status === "CONNECTING" && profile.whatsapp_instance_id) {
+        fetchQRCode(profile.whatsapp_instance_id);
       }
+    }
+  }
+
+  async function fetchQRCode(instanceId: string) {
+    try {
+      const response = await fetch(`/api/whatsapp/qrcode?instanceId=${instanceId}`);
+      const data = await response.json();
+      if (data.qrcode) {
+        setQrCode(data.qrcode);
+      }
+    } catch (error) {
+      console.error("Erro ao buscar QR code:", error);
     }
   }
 
   const handleConnect = async () => {
     setLoading(true);
-    setStatus("CONNECTING");
 
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
@@ -50,27 +63,52 @@ export default function WhatsAppPage() {
       return;
     }
 
-    // Abre o painel da Z-API em nova aba para o usuário escanear o QR code
-    window.open("https://app.z-api.io", "_blank");
+    try {
+      // Cria uma nova instância na Z-API
+      const response = await fetch("/api/whatsapp/create-instance", {
+        method: "POST",
+      });
+      const data = await response.json();
 
-    await supabase
-      .from("profiles")
-      .update({ whatsapp_session_status: "CONNECTING" })
-      .eq("id", user.id);
+      if (data.instanceId) {
+        // Salva no perfil
+        await supabase
+          .from("profiles")
+          .update({
+            whatsapp_session_status: "CONNECTING",
+            whatsapp_instance_id: data.instanceId,
+          })
+          .eq("id", user.id);
+
+        setStatus("CONNECTING");
+
+        // Busca o QR code
+        if (data.qrcode) {
+          setQrCode(data.qrcode);
+        } else {
+          // Tenta buscar após 3 segundos
+          setTimeout(() => fetchQRCode(data.instanceId), 3000);
+        }
+      } else {
+        alert("Erro ao criar instância do WhatsApp. Tente novamente.");
+      }
+    } catch (error) {
+      console.error("Erro ao conectar:", error);
+      alert("Erro ao conectar WhatsApp.");
+    }
 
     setLoading(false);
   };
 
   const handleCheckConnection = async () => {
-    setLoading(true);
+    setChecking(true);
 
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
-      setLoading(false);
+      setChecking(false);
       return;
     }
 
-    // Verifica via API da Z-API se está conectado
     try {
       const { data: profile } = await supabase
         .from("profiles")
@@ -79,7 +117,7 @@ export default function WhatsAppPage() {
         .single();
 
       if (!profile?.whatsapp_instance_id) {
-        setLoading(false);
+        setChecking(false);
         return;
       }
 
@@ -92,14 +130,17 @@ export default function WhatsAppPage() {
           .update({ whatsapp_session_status: "CONNECTED" })
           .eq("id", user.id);
         setStatus("CONNECTED");
+        setQrCode(null);
       } else {
-        alert("WhatsApp ainda não conectado. Escaneie o QR Code no painel da Z-API primeiro.");
+        // Tenta buscar QR code novamente
+        fetchQRCode(profile.whatsapp_instance_id);
+        alert("WhatsApp ainda não conectado. Escaneie o QR Code abaixo com seu celular.");
       }
     } catch (error) {
       console.error("Erro ao verificar conexão:", error);
     }
 
-    setLoading(false);
+    setChecking(false);
   };
 
   const handleDisconnect = async () => {
@@ -108,10 +149,14 @@ export default function WhatsAppPage() {
 
     await supabase
       .from("profiles")
-      .update({ whatsapp_session_status: "DISCONNECTED" })
+      .update({
+        whatsapp_session_status: "DISCONNECTED",
+        whatsapp_instance_id: null,
+      })
       .eq("id", user.id);
 
     setStatus("DISCONNECTED");
+    setQrCode(null);
   };
 
   const statusConfig = {
@@ -145,26 +190,30 @@ export default function WhatsAppPage() {
               <div className="space-y-3">
                 {status === "DISCONNECTED" && (
                   <Button className="w-full" onClick={handleConnect} disabled={loading}>
-                    <QrCode className="w-4 h-4 mr-2" />
-                    {loading ? "Abrindo Z-API..." : "Conectar WhatsApp"}
+                    {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <QrCode className="w-4 h-4 mr-2" />}
+                    {loading ? "Criando instância..." : "Conectar WhatsApp"}
                   </Button>
                 )}
 
                 {status === "CONNECTING" && (
                   <>
-                    <div className="rounded-lg bg-yellow-500/10 border border-yellow-500/20 p-4 text-center space-y-2">
-                      <p className="text-sm font-medium text-yellow-600">Aguardando conexão</p>
-                      <p className="text-xs text-muted-foreground">
-                        Escaneie o QR Code no painel da Z-API e depois clique em "Verificar Conexão"
-                      </p>
-                    </div>
-                    <Button className="w-full" onClick={handleCheckConnection} disabled={loading}>
-                      <CheckCircle className="w-4 h-4 mr-2" />
-                      {loading ? "Verificando..." : "Verificar Conexão"}
-                    </Button>
-                    <Button variant="outline" className="w-full" onClick={() => window.open("https://app.z-api.io", "_blank")}>
-                      <ExternalLink className="w-4 h-4 mr-2" />
-                      Abrir Painel Z-API
+                    {qrCode && (
+                      <div className="flex flex-col items-center space-y-4">
+                        <img src={`data:image/png;base64,${qrCode}`} alt="QR Code WhatsApp" className="rounded-lg border w-48 h-48" />
+                        <p className="text-sm text-muted-foreground text-center">
+                          Abra o WhatsApp no celular e escaneie o QR Code acima
+                        </p>
+                      </div>
+                    )}
+                    {!qrCode && (
+                      <div className="flex flex-col items-center space-y-4 py-8">
+                        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+                        <p className="text-sm text-muted-foreground">Gerando QR Code...</p>
+                      </div>
+                    )}
+                    <Button className="w-full" onClick={handleCheckConnection} disabled={checking}>
+                      {checking ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <CheckCircle className="w-4 h-4 mr-2" />}
+                      {checking ? "Verificando..." : "Já escaneei — Verificar Conexão"}
                     </Button>
                   </>
                 )}
@@ -194,15 +243,15 @@ export default function WhatsAppPage() {
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <h4 className="font-medium">1. Clique em "Conectar WhatsApp"</h4>
-                <p className="text-sm text-muted-foreground">Isso vai abrir o painel da Z-API em uma nova aba.</p>
+                <p className="text-sm text-muted-foreground">O sistema cria uma instância e gera um QR Code.</p>
               </div>
               <div className="space-y-2">
-                <h4 className="font-medium">2. Escaneie o QR Code no painel da Z-API</h4>
-                <p className="text-sm text-muted-foreground">Abra o WhatsApp no celular, vá em Configurações → Dispositivos Conectados → Conectar Dispositivo.</p>
+                <h4 className="font-medium">2. Escaneie o QR Code</h4>
+                <p className="text-sm text-muted-foreground">Abra o WhatsApp no celular → Configurações → Dispositivos Conectados → Conectar.</p>
               </div>
               <div className="space-y-2">
-                <h4 className="font-medium">3. Volte aqui e clique "Verificar Conexão"</h4>
-                <p className="text-sm text-muted-foreground">O sistema vai confirmar que seu WhatsApp está conectado.</p>
+                <h4 className="font-medium">3. Clique "Verificar Conexão"</h4>
+                <p className="text-sm text-muted-foreground">Confirme que o WhatsApp está conectado.</p>
               </div>
 
               <div className="rounded-lg bg-muted p-4">
